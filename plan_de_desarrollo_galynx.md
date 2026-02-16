@@ -16,7 +16,7 @@
 
 ### Cliente (Desktop)
 - **Tauri**
-- UI Web (React / Svelte / Vue – a definir)
+- UI Web (Nuxt)
 - Renderizado de Markdown (con sanitización)
 - WebSocket para tiempo real
 - Subida directa de archivos a S3 mediante URLs prefirmadas
