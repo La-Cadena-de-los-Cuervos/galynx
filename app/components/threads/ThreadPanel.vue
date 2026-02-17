@@ -87,7 +87,14 @@ onBeforeUnmount(() => {
 
     <div ref="repliesScroller" class="flex-1 overflow-y-auto px-3 py-3 space-y-3" @scroll.passive="onRepliesScroll">
       <div class="rounded-lg border gx-border bg-slate-950/45">
-        <MessageItem :message="rootMessage" :users="users" :currentUser="currentUser" />
+        <MessageItem
+          :message="rootMessage"
+          :users="users"
+          :currentUser="currentUser"
+          @edit="$emit('edit', $event)"
+          @delete="$emit('delete', $event)"
+          @request-delete-denied="$emit('request-delete-denied')"
+        />
       </div>
 
       <div class="space-y-2">

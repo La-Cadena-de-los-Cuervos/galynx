@@ -19,16 +19,22 @@ const props = withDefaults(defineProps<{
   connectionStatus: 'offline'
 })
 
-defineEmits<{
+const emit = defineEmits<{
   (e: 'switch-workspace', workspaceId: string): void
   (e: 'select-channel', channelId: string): void
   (e: 'create-channel'): void
+  (e: 'delete-channel', channelId: string): void
+  (e: 'open-settings'): void
 }>()
 
 const canManageChannels = computed(() => props.currentRole === 'owner' || props.currentRole === 'admin')
 const activeWorkspace = computed(
   () => props.workspaces.find((workspace) => workspace.id === props.activeWorkspaceId) ?? props.workspaces[0]
 )
+
+const requestDeleteChannel = (channelId: string) => {
+  emit('delete-channel', channelId)
+}
 </script>
 
 <template>
@@ -44,7 +50,17 @@ const activeWorkspace = computed(
         </div>
       </button>
 
-      <ConnectionBadge :status="connectionStatus" />
+      <div class="flex items-center gap-2">
+        <button
+          type="button"
+          class="h-8 w-8 rounded-md gx-btn-ghost gx-focus text-xs"
+          title="API settings"
+          @click="$emit('open-settings')"
+        >
+          ⚙
+        </button>
+        <ConnectionBadge :status="connectionStatus" />
+      </div>
     </div>
 
     <div class="p-3">
@@ -66,17 +82,31 @@ const activeWorkspace = computed(
         </div>
 
         <nav class="space-y-1">
-          <button
+          <div
             v-for="c in publicChannels"
             :key="c.id"
-            type="button"
-            class="w-full flex items-center justify-between text-left px-2.5 py-2 rounded-md transition gx-focus"
+            class="w-full flex items-center gap-1 rounded-md transition group"
             :class="c.id === activeChannelId ? 'bg-cyan-400/12 text-cyan-100' : 'hover:bg-white/5 text-slate-200'"
-            @click="$emit('select-channel', c.id)"
           >
-            <span class="gx-text-body truncate"># {{ c.name }}</span>
-            <span class="gx-text-caption gx-muted">{{ c.memberCount }}</span>
-          </button>
+            <button
+              type="button"
+              class="flex-1 min-w-0 flex items-center justify-between text-left px-2.5 py-2 rounded-md transition gx-focus"
+              @click="$emit('select-channel', c.id)"
+            >
+              <span class="gx-text-body truncate"># {{ c.name }}</span>
+              <span class="gx-text-caption gx-muted">{{ c.memberCount }}</span>
+            </button>
+
+            <button
+              v-if="canManageChannels"
+              type="button"
+              class="mr-1 h-7 w-7 rounded text-xs gx-btn-ghost gx-focus opacity-0 group-hover:opacity-100 relative z-10"
+              title="Delete channel"
+              @click.stop="requestDeleteChannel(c.id)"
+            >
+              ✕
+            </button>
+          </div>
         </nav>
       </section>
 
@@ -86,17 +116,31 @@ const activeWorkspace = computed(
         </div>
 
         <nav class="space-y-1">
-          <button
+          <div
             v-for="c in privateChannels"
             :key="c.id"
-            type="button"
-            class="w-full flex items-center justify-between text-left px-2.5 py-2 rounded-md transition gx-focus"
+            class="w-full flex items-center gap-1 rounded-md transition group"
             :class="c.id === activeChannelId ? 'bg-cyan-400/12 text-cyan-100' : 'hover:bg-white/5 text-slate-200'"
-            @click="$emit('select-channel', c.id)"
           >
-            <span class="gx-text-body truncate">🔒 {{ c.name }}</span>
-            <span class="gx-text-caption gx-muted">{{ c.memberCount }}</span>
-          </button>
+            <button
+              type="button"
+              class="flex-1 min-w-0 flex items-center justify-between text-left px-2.5 py-2 rounded-md transition gx-focus"
+              @click="$emit('select-channel', c.id)"
+            >
+              <span class="gx-text-body truncate">🔒 {{ c.name }}</span>
+              <span class="gx-text-caption gx-muted">{{ c.memberCount }}</span>
+            </button>
+
+            <button
+              v-if="canManageChannels"
+              type="button"
+              class="mr-1 h-7 w-7 rounded text-xs gx-btn-ghost gx-focus opacity-0 group-hover:opacity-100 relative z-10"
+              title="Delete channel"
+              @click.stop="requestDeleteChannel(c.id)"
+            >
+              ✕
+            </button>
+          </div>
         </nav>
       </section>
     </div>

@@ -142,6 +142,16 @@ export const useGalynxApi = () => {
     return invoke<void>('realtime_disconnect')
   }
 
+  const settingsGetApiBase = () => {
+    ensureTauri()
+    return invoke<string>('settings_get_api_base')
+  }
+
+  const settingsSetApiBase = (apiBase: string) => {
+    ensureTauri()
+    return invoke<string>('settings_set_api_base', { payload: { api_base: apiBase } })
+  }
+
   return {
     authLogin,
     authMe,
@@ -157,6 +167,8 @@ export const useGalynxApi = () => {
     threadGet,
     threadRepliesList,
     threadReplySend,
+    settingsGetApiBase,
+    settingsSetApiBase,
     realtimeConnect,
     realtimeDisconnect
   }

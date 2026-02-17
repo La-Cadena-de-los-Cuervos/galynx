@@ -1,5 +1,7 @@
 <script setup lang="ts">
+import ApiSettingsModal from '~/components/ApiSettingsModal.vue'
 import ChannelHeader from '~/components/ChannelHeader.vue'
+import ConfirmActionModal from '~/components/ConfirmActionModal.vue'
 import CreateChannelModal from '~/components/CreateChannelModal.vue'
 import EmptyState from '~/components/EmptyState.vue'
 import LeftSidebar from '~/components/LeftSidebar.vue'
@@ -20,6 +22,9 @@ const scrollDebounceTimer = ref<ReturnType<typeof setTimeout> | null>(null)
 
 const workspaces: Workspace[] = [{ id: 'ws-1', name: 'Galynx Engineering', shortLabel: 'GX' }]
 const showCreateChannelModal = ref(false)
+const showApiSettingsModal = ref(false)
+const confirmingAction = ref<null | { kind: 'message' | 'channel'; id: string }>(null)
+const confirmBusy = ref(false)
 const fallbackUser = computed<User>(() => {
   const current = state.value.currentUser
   if (current) return current
@@ -107,7 +112,76 @@ const onEditMessage = async (payload: { messageId: string; body: string }) => {
 }
 
 const onDeleteMessage = async (messageId: string) => {
-  await app.deleteMessage(messageId)
+  confirmingAction.value = { kind: 'message', id: messageId }
+}
+
+const onDeleteChannel = async (channelId: string) => {
+  confirmingAction.value = { kind: 'channel', id: channelId }
+}
+
+const onDeleteDenied = () => {
+  app.notifyError('You do not have permission to delete this message.')
+}
+
+const onOpenSettings = async () => {
+  try {
+    if (!state.value.apiBase) {
+      await app.loadApiBaseSetting()
+    }
+  } catch {
+    // Error is already reported in global banner.
+  }
+  showApiSettingsModal.value = true
+}
+
+const onSaveApiBase = async (value: string) => {
+  try {
+    await app.saveApiBaseSetting(value)
+    showApiSettingsModal.value = false
+  } catch {
+    // Error is already reported in global banner.
+  }
+}
+
+const confirmTitle = computed(() => {
+  if (!confirmingAction.value) return ''
+  if (confirmingAction.value.kind === 'channel') return 'Delete channel'
+  return 'Delete message'
+})
+
+const confirmMessage = computed(() => {
+  const action = confirmingAction.value
+  if (!action) return ''
+  if (action.kind === 'channel') {
+    const channel = state.value.channels.find((item) => item.id === action.id)
+    return `Are you sure you want to delete #${channel?.name ?? 'channel'}? This action cannot be undone.`
+  }
+  return 'Are you sure you want to delete this message? This action cannot be undone.'
+})
+
+const closeConfirmModal = () => {
+  if (confirmBusy.value) return
+  confirmingAction.value = null
+}
+
+const runConfirmedDelete = async () => {
+  const action = confirmingAction.value
+  if (!action) return
+  confirmBusy.value = true
+
+  try {
+    if (action.kind === 'channel') {
+      await app.deleteChannel(action.id)
+    } else {
+      await app.deleteMessage(action.id)
+    }
+    confirmingAction.value = null
+  } catch {
+    if (action.kind === 'channel') app.notifyError('Could not delete channel.')
+    else app.notifyError('Could not delete message.')
+  } finally {
+    confirmBusy.value = false
+  }
 }
 
 const onLoadMoreMessages = async () => {
@@ -152,6 +226,7 @@ const onCreateChannel = async (payload: { name: string; isPrivate: boolean }) =>
 }
 
 onMounted(async () => {
+  if (state.value.initialized) return
   try {
     await app.bootstrap()
   } catch {
@@ -172,6 +247,8 @@ onMounted(async () => {
       :connectionStatus="state.connectionStatus"
       @select-channel="app.selectChannel"
       @create-channel="showCreateChannelModal = true"
+      @delete-channel="onDeleteChannel"
+      @open-settings="onOpenSettings"
     />
 
     <main class="flex-1 min-w-0 flex flex-col">
@@ -185,6 +262,11 @@ onMounted(async () => {
       />
 
       <section ref="messagesScroller" class="flex-1 min-h-0 overflow-y-auto px-6 py-6" @scroll.passive="onMessagesScroll">
+        <div v-if="state.errorMessage" class="mb-4 rounded-lg border gx-border bg-rose-500/10 px-3 py-2 text-xs text-rose-100 flex items-center justify-between gap-3">
+          <span>{{ state.errorMessage }}</span>
+          <button type="button" class="gx-btn-ghost rounded px-2 py-1 text-[11px]" @click="app.clearError()">Dismiss</button>
+        </div>
+
         <div v-if="state.connectionStatus === 'reconnecting'" class="mb-4 text-xs px-3 py-2 rounded-lg border gx-border bg-amber-500/10 text-amber-100">
           Reconnecting to WebSocket... Your drafts are safe.
         </div>
@@ -212,6 +294,7 @@ onMounted(async () => {
               @reply="onReply"
               @edit="onEditMessage"
               @delete="onDeleteMessage"
+              @request-delete-denied="onDeleteDenied"
             />
           </div>
         </div>
@@ -236,6 +319,7 @@ onMounted(async () => {
       @load-more="onLoadMoreThreadReplies"
       @edit="onEditMessage"
       @delete="onDeleteMessage"
+      @request-delete-denied="onDeleteDenied"
       @close="app.closeThread"
     />
 
@@ -243,6 +327,24 @@ onMounted(async () => {
       v-if="showCreateChannelModal"
       @close="showCreateChannelModal = false"
       @create="onCreateChannel"
+    />
+
+    <ConfirmActionModal
+      v-if="confirmingAction"
+      :title="confirmTitle"
+      :message="confirmMessage"
+      confirmLabel="Delete"
+      :busy="confirmBusy"
+      @cancel="closeConfirmModal"
+      @confirm="runConfirmedDelete"
+    />
+
+    <ApiSettingsModal
+      v-if="showApiSettingsModal"
+      :modelValue="state.apiBase"
+      :busy="state.settingsSaving"
+      @close="showApiSettingsModal = false"
+      @save="onSaveApiBase"
     />
   </div>
 </template>

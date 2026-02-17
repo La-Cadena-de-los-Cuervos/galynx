@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import ApiSettingsModal from '~/components/ApiSettingsModal.vue'
+
 const router = useRouter()
 const app = useGalynxApp()
 
@@ -6,6 +8,7 @@ const email = ref('')
 const password = ref('')
 const formError = ref<string>('')
 const authenticating = computed(() => app.state.value.authenticating)
+const showApiSettingsModal = ref(false)
 
 const canContinue = computed(() => email.value.trim().length > 3 && password.value.trim().length > 3)
 
@@ -17,6 +20,26 @@ const go = async () => {
     await router.push('/')
   } catch {
     formError.value = app.state.value.errorMessage ?? 'Could not sign in. Check your credentials.'
+  }
+}
+
+const openApiSettings = async () => {
+  try {
+    if (!app.state.value.apiBase) {
+      await app.loadApiBaseSetting()
+    }
+  } catch {
+    // Error is shown from global store.
+  }
+  showApiSettingsModal.value = true
+}
+
+const saveApiBase = async (value: string) => {
+  try {
+    await app.saveApiBaseSetting(value)
+    showApiSettingsModal.value = false
+  } catch {
+    // Error is shown from global store.
   }
 }
 </script>
@@ -60,10 +83,30 @@ const go = async () => {
           {{ authenticating ? 'Signing in...' : 'Continue' }}
         </button>
 
+        <button
+          type="button"
+          class="w-full h-10 rounded-lg gx-text-body gx-btn-ghost gx-focus"
+          @click="openApiSettings"
+        >
+          API settings
+        </button>
+
         <p v-if="formError" class="gx-text-label text-rose-300">
           {{ formError }}
         </p>
+
+        <p v-if="app.state.value.errorMessage" class="gx-text-label text-rose-300">
+          {{ app.state.value.errorMessage }}
+        </p>
       </div>
     </div>
+
+    <ApiSettingsModal
+      v-if="showApiSettingsModal"
+      :modelValue="app.state.value.apiBase"
+      :busy="app.state.value.settingsSaving"
+      @close="showApiSettingsModal = false"
+      @save="saveApiBase"
+    />
   </div>
 </template>

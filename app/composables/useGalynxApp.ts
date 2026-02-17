@@ -15,7 +15,10 @@ type GalynxAppState = {
   initialized: boolean
   bootstrapping: boolean
   authenticating: boolean
+  settingsLoading: boolean
+  settingsSaving: boolean
   errorMessage?: string
+  apiBase: string
   currentUser?: User
   users: User[]
   channels: ApiChannelDto[]
@@ -74,6 +77,9 @@ const makeInitialState = (): GalynxAppState => ({
   initialized: false,
   bootstrapping: false,
   authenticating: false,
+  settingsLoading: false,
+  settingsSaving: false,
+  apiBase: '',
   users: [],
   channels: [],
   messagesByChannel: {},
@@ -88,6 +94,24 @@ const makeInitialState = (): GalynxAppState => ({
 export const useGalynxApp = () => {
   const api = useGalynxApi()
   const state = useState<GalynxAppState>('galynx-app', makeInitialState)
+  let errorTimer: ReturnType<typeof setTimeout> | null = null
+
+  const setError = (message: string) => {
+    state.value.errorMessage = message
+    if (errorTimer) clearTimeout(errorTimer)
+    errorTimer = setTimeout(() => {
+      state.value.errorMessage = undefined
+      errorTimer = null
+    }, 5000)
+  }
+
+  const clearError = () => {
+    state.value.errorMessage = undefined
+    if (errorTimer) {
+      clearTimeout(errorTimer)
+      errorTimer = null
+    }
+  }
 
   const ensureUser = (id: string, role: Role = 'member') => {
     const existing = state.value.users.find((user) => user.id === id)
@@ -175,6 +199,9 @@ export const useGalynxApp = () => {
     state.value.errorMessage = undefined
 
     try {
+      if (!state.value.apiBase) {
+        await loadApiBaseSetting()
+      }
       const me = await api.authMe()
       applyCurrentUser(me)
 
@@ -190,7 +217,7 @@ export const useGalynxApp = () => {
       state.value.connectionStatus = 'online'
       state.value.initialized = true
     } catch (error) {
-      state.value.errorMessage = mapApiError(error)
+      setError(mapApiError(error))
       throw error
     } finally {
       state.value.bootstrapping = false
@@ -205,7 +232,7 @@ export const useGalynxApp = () => {
       applyCurrentUser(session.user)
       state.value.initialized = false
     } catch (error) {
-      state.value.errorMessage = mapApiError(error)
+      setError(mapApiError(error))
       throw error
     } finally {
       state.value.authenticating = false
@@ -226,8 +253,65 @@ export const useGalynxApp = () => {
   }
 
   const createChannel = async (name: string, isPrivate: boolean) => {
-    const created = await api.channelsCreate(name, isPrivate)
-    state.value.channels = [created, ...state.value.channels]
+    try {
+      const created = await api.channelsCreate(name, isPrivate)
+      state.value.channels = [created, ...state.value.channels]
+    } catch (error) {
+      setError(mapApiError(error))
+      throw error
+    }
+  }
+
+  const loadApiBaseSetting = async () => {
+    if (state.value.settingsLoading) return
+    state.value.settingsLoading = true
+    try {
+      const apiBase = await api.settingsGetApiBase()
+      state.value.apiBase = apiBase
+    } catch (error) {
+      setError(mapApiError(error))
+      throw error
+    } finally {
+      state.value.settingsLoading = false
+    }
+  }
+
+  const saveApiBaseSetting = async (apiBase: string) => {
+    state.value.settingsSaving = true
+    try {
+      const next = await api.settingsSetApiBase(apiBase)
+      state.value.apiBase = next
+      await api.realtimeDisconnect().catch(() => {})
+      if (state.value.initialized) {
+        await api.realtimeConnect().catch(() => {})
+      }
+    } catch (error) {
+      setError(mapApiError(error))
+      throw error
+    } finally {
+      state.value.settingsSaving = false
+    }
+  }
+
+  const deleteChannel = async (channelId: string) => {
+    try {
+      await api.channelsDelete(channelId)
+      state.value.channels = state.value.channels.filter((channel) => channel.id !== channelId)
+      delete state.value.messagesByChannel[channelId]
+      delete state.value.messageNextCursorByChannel[channelId]
+      delete state.value.loadingMoreMessagesByChannel[channelId]
+
+      if (state.value.activeChannelId === channelId) {
+        const next = state.value.channels[0]
+        state.value.activeChannelId = next?.id
+        if (next && !state.value.messagesByChannel[next.id]) {
+          await loadMessages(next.id)
+        }
+      }
+    } catch (error) {
+      setError(mapApiError(error))
+      throw error
+    }
   }
 
   const sendMessage = async (text: string, files: File[] = []) => {
@@ -293,17 +377,39 @@ export const useGalynxApp = () => {
     } catch {
       optimistic.status = 'failed'
       upsertMessage(optimistic)
+      setError('Could not send message.')
     }
   }
 
+  const isMessageOwner = (messageId: string): boolean => {
+    const userId = state.value.currentUser?.id
+    if (!userId) return false
+    for (const messages of Object.values(state.value.messagesByChannel)) {
+      const match = messages.find((message) => message.id === messageId)
+      if (!match) continue
+      return match.userId === userId
+    }
+    return false
+  }
+
   const editMessage = async (messageId: string, nextBody: string) => {
-    const updated = await api.messagesEdit(messageId, nextBody)
-    upsertMessage(mapApiMessageToUi(updated))
+    try {
+      const updated = await api.messagesEdit(messageId, nextBody)
+      upsertMessage(mapApiMessageToUi(updated))
+    } catch (error) {
+      setError(mapApiError(error))
+      throw error
+    }
   }
 
   const deleteMessage = async (messageId: string) => {
-    await api.messagesDelete(messageId)
-    removeMessage(messageId)
+    try {
+      await api.messagesDelete(messageId)
+      removeMessage(messageId)
+    } catch (error) {
+      setError(mapApiError(error))
+      throw error
+    }
   }
 
   const openThread = async (root: Message) => {
@@ -322,9 +428,14 @@ export const useGalynxApp = () => {
 
   const sendThreadReply = async (text: string) => {
     if (!state.value.threadRoot) return
-    const sent = await api.threadReplySend(state.value.threadRoot.id, text)
-    const mapped = mapApiMessageToUi(sent)
-    state.value.threadReplies.push(mapped)
+    try {
+      const sent = await api.threadReplySend(state.value.threadRoot.id, text)
+      const mapped = mapApiMessageToUi(sent)
+      state.value.threadReplies.push(mapped)
+    } catch (error) {
+      setError(mapApiError(error))
+      throw error
+    }
   }
 
   const loadMoreMessages = async () => {
@@ -337,6 +448,8 @@ export const useGalynxApp = () => {
     state.value.loadingMoreMessagesByChannel[channelId] = true
     try {
       await loadMessages(channelId, { append: true, cursor })
+    } catch (error) {
+      setError(mapApiError(error))
     } finally {
       state.value.loadingMoreMessagesByChannel[channelId] = false
     }
@@ -354,6 +467,8 @@ export const useGalynxApp = () => {
       for (const message of mapped) ensureUser(message.userId)
       state.value.threadReplies = mergeByIdSorted([...state.value.threadReplies, ...mapped])
       state.value.threadRepliesNextCursor = list.next_cursor
+    } catch (error) {
+      setError(mapApiError(error))
     } finally {
       state.value.loadingMoreThreadReplies = false
     }
@@ -429,15 +544,21 @@ export const useGalynxApp = () => {
     logout,
     selectChannel,
     createChannel,
+    deleteChannel,
+    loadApiBaseSetting,
+    saveApiBaseSetting,
     sendMessage,
     editMessage,
     deleteMessage,
+    isMessageOwner,
     loadMoreMessages,
     openThread,
     closeThread,
     sendThreadReply,
     loadMoreThreadReplies,
     applyRealtimeEvent,
-    setConnectionStatus
+    setConnectionStatus,
+    notifyError: setError,
+    clearError
   }
 }

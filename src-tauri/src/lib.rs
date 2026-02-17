@@ -16,6 +16,7 @@ use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 const DEFAULT_API_BASE: &str = "http://localhost:3000/api/v1";
 const TOKEN_STORE_FILE: &str = "secure-tokens.bin";
 const TOKEN_STORE_KEY: &str = "auth_tokens";
+const API_BASE_STORE_KEY: &str = "api_base";
 const ENCRYPTION_KEY_FALLBACK: &[u8] = b"galynx-desktop-store-v1";
 static ENCRYPTION_KEY_BYTES: OnceLock<Vec<u8>> = OnceLock::new();
 
@@ -168,6 +169,11 @@ struct ThreadGetPayload {
     root_id: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ApiBasePayload {
+    api_base: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 struct ApiErrorDto {
     status: u16,
@@ -227,10 +233,31 @@ type CmdResult<T> = Result<T, ApiErrorDto>;
 struct AppState {
     app: AppHandle,
     client: reqwest::Client,
-    api_base: String,
+    api_base: Arc<RwLock<String>>,
     tokens: Arc<RwLock<Option<TokenBundle>>>,
     refresh_lock: Arc<Mutex<()>>,
     ws_shutdown: Arc<Mutex<Option<oneshot::Sender<()>>>>,
+}
+
+fn normalize_api_base(value: &str) -> Option<String> {
+    let mut base = value.trim().trim_end_matches('/').to_string();
+    if base.is_empty() {
+        return None;
+    }
+
+    if !base.starts_with("http://") && !base.starts_with("https://") {
+        return None;
+    }
+
+    if !base.ends_with("/api/v1") {
+        if base.ends_with("/api") {
+            base.push_str("/v1");
+        } else {
+            base.push_str("/api/v1");
+        }
+    }
+
+    Some(base)
 }
 
 fn derive_encryption_key(seed: &str) -> Vec<u8> {
@@ -341,19 +368,56 @@ fn map_attachment_commit_response(
     }
 }
 
+fn load_api_base_from_store_for_app(app: &AppHandle) -> Option<String> {
+    let store = app
+        .store_builder(TOKEN_STORE_FILE)
+        .serialize(serialize_encrypted)
+        .deserialize(deserialize_encrypted)
+        .build()
+        .ok()?;
+    let raw = store
+        .get(API_BASE_STORE_KEY)
+        .and_then(|value| value.as_str().map(ToString::to_string))?;
+    normalize_api_base(&raw)
+}
+
 impl AppState {
-    fn endpoint(&self, path: &str) -> String {
-        format!("{}{}", self.api_base, path)
+    async fn current_api_base(&self) -> String {
+        self.api_base.read().await.clone()
     }
 
-    async fn load_tokens_from_store(&self) -> Result<Option<TokenBundle>, ApiError> {
-        let store = self
-            .app
+    async fn endpoint(&self, path: &str) -> String {
+        format!("{}{}", self.current_api_base().await, path)
+    }
+
+    fn get_secure_store(&self) -> Result<Arc<tauri_plugin_store::Store<tauri::Wry>>, ApiError> {
+        self.app
             .store_builder(TOKEN_STORE_FILE)
             .serialize(serialize_encrypted)
             .deserialize(deserialize_encrypted)
             .build()
-            .map_err(|err| ApiError::Storage(err.to_string()))?;
+            .map_err(|err| ApiError::Storage(err.to_string()))
+    }
+
+    async fn persist_api_base(&self, api_base: &str) -> Result<(), ApiError> {
+        let store = self.get_secure_store()?;
+        store.set(API_BASE_STORE_KEY, JsonValue::String(api_base.to_string()));
+        store
+            .save()
+            .map_err(|err| ApiError::Storage(format!("could not save api_base: {err}")))?;
+        Ok(())
+    }
+
+    async fn set_api_base(&self, api_base: &str) -> Result<String, ApiError> {
+        let normalized = normalize_api_base(api_base)
+            .ok_or_else(|| ApiError::InvalidResponse("invalid API base URL".to_string()))?;
+        self.persist_api_base(&normalized).await?;
+        *self.api_base.write().await = normalized.clone();
+        Ok(normalized)
+    }
+
+    async fn load_tokens_from_store(&self) -> Result<Option<TokenBundle>, ApiError> {
+        let store = self.get_secure_store()?;
 
         let value = match store.get(TOKEN_STORE_KEY) {
             Some(value) => value,
@@ -366,13 +430,7 @@ impl AppState {
     }
 
     async fn persist_tokens(&self, tokens: &TokenBundle) -> Result<(), ApiError> {
-        let store = self
-            .app
-            .store_builder(TOKEN_STORE_FILE)
-            .serialize(serialize_encrypted)
-            .deserialize(deserialize_encrypted)
-            .build()
-            .map_err(|err| ApiError::Storage(err.to_string()))?;
+        let store = self.get_secure_store()?;
 
         let value = serde_json::to_value(tokens)
             .map_err(|err| ApiError::Storage(format!("could not serialize tokens: {err}")))?;
@@ -385,13 +443,7 @@ impl AppState {
     }
 
     async fn clear_tokens(&self) -> Result<(), ApiError> {
-        let store = self
-            .app
-            .store_builder(TOKEN_STORE_FILE)
-            .serialize(serialize_encrypted)
-            .deserialize(deserialize_encrypted)
-            .build()
-            .map_err(|err| ApiError::Storage(err.to_string()))?;
+        let store = self.get_secure_store()?;
 
         store.delete(TOKEN_STORE_KEY);
         store
@@ -426,7 +478,7 @@ impl AppState {
         let mut rate_retry = 0_u8;
 
         loop {
-            let mut req = self.client.request(method.clone(), self.endpoint(path));
+            let mut req = self.client.request(method.clone(), self.endpoint(path).await);
 
             if auth_required {
                 let tokens = self.require_tokens().await?;
@@ -509,7 +561,7 @@ impl AppState {
 
         let resp = self
             .client
-            .request(Method::POST, self.endpoint("/auth/refresh"))
+            .request(Method::POST, self.endpoint("/auth/refresh").await)
             .json(&payload)
             .send()
             .await
@@ -894,6 +946,16 @@ async fn thread_reply_send(
         .map_err(|err| ApiErrorDto::from(ApiError::InvalidResponse(err.to_string())))
 }
 
+#[tauri::command]
+async fn settings_get_api_base(state: State<'_, AppState>) -> CmdResult<String> {
+    Ok(state.current_api_base().await)
+}
+
+#[tauri::command]
+async fn settings_set_api_base(state: State<'_, AppState>, payload: ApiBasePayload) -> CmdResult<String> {
+    state.set_api_base(&payload.api_base).await.map_err(ApiErrorDto::from)
+}
+
 fn websocket_url(api_base: &str) -> String {
     let url = api_base.trim_end_matches('/');
     if let Some(rest) = url.strip_prefix("https://") {
@@ -912,10 +974,11 @@ async fn ws_emit<R: Runtime, S: Serialize + Clone>(app: &AppHandle<R>, event: &s
 }
 
 async fn run_ws_loop(state: AppState, app: AppHandle, mut shutdown_rx: oneshot::Receiver<()>) {
-    let ws_url = websocket_url(&state.api_base);
     let mut retry_seconds = 1_u64;
 
     loop {
+        let current_base = state.current_api_base().await;
+        let ws_url = websocket_url(&current_base);
         ws_emit(&app, "realtime:status", json!({ "status": "reconnecting" })).await;
         let tokens = match state.require_tokens().await {
             Ok(tokens) => tokens,
@@ -1038,8 +1101,13 @@ pub fn run() {
                 )?;
             }
 
-            let api_base =
-                std::env::var("GALYNX_API_BASE").unwrap_or_else(|_| DEFAULT_API_BASE.to_string());
+            let env_api_base = std::env::var("GALYNX_API_BASE")
+                .ok()
+                .and_then(|value| normalize_api_base(&value));
+            let stored_api_base = load_api_base_from_store_for_app(app.handle());
+            let api_base = env_api_base
+                .or(stored_api_base)
+                .unwrap_or_else(|| DEFAULT_API_BASE.to_string());
             let client = reqwest::Client::builder()
                 .build()
                 .map_err(|err| tauri::Error::Anyhow(err.into()))?;
@@ -1047,7 +1115,7 @@ pub fn run() {
             let state = AppState {
                 app: app.handle().clone(),
                 client,
-                api_base,
+                api_base: Arc::new(RwLock::new(api_base)),
                 tokens: Arc::new(RwLock::new(None)),
                 refresh_lock: Arc::new(Mutex::new(())),
                 ws_shutdown: Arc::new(Mutex::new(None)),
@@ -1074,6 +1142,8 @@ pub fn run() {
             thread_get,
             thread_replies_list,
             thread_reply_send,
+            settings_get_api_base,
+            settings_set_api_base,
             realtime_connect,
             realtime_disconnect
         ])
@@ -1129,5 +1199,22 @@ mod tests {
         assert_eq!(mapped.size_bytes, 1200);
         assert_eq!(mapped.content_type.as_deref(), Some("application/pdf"));
         assert_eq!(mapped.storage_key.as_deref(), Some("workspace/key"));
+    }
+
+    #[test]
+    fn api_base_normalization() {
+        assert_eq!(
+            normalize_api_base("http://localhost:3000").as_deref(),
+            Some("http://localhost:3000/api/v1")
+        );
+        assert_eq!(
+            normalize_api_base("https://galynx.local/api/").as_deref(),
+            Some("https://galynx.local/api/v1")
+        );
+        assert_eq!(
+            normalize_api_base("https://galynx.local/api/v1").as_deref(),
+            Some("https://galynx.local/api/v1")
+        );
+        assert!(normalize_api_base("localhost:3000").is_none());
     }
 }
