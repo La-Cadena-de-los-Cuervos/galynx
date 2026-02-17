@@ -21,8 +21,12 @@ type GalynxAppState = {
   channels: ApiChannelDto[]
   activeChannelId?: string
   messagesByChannel: Record<string, Message[]>
+  messageNextCursorByChannel: Record<string, string | null>
+  loadingMoreMessagesByChannel: Record<string, boolean>
   threadRoot?: Message
   threadReplies: Message[]
+  threadRepliesNextCursor: string | null
+  loadingMoreThreadReplies: boolean
   connectionStatus: ConnectionStatus
 }
 
@@ -73,7 +77,11 @@ const makeInitialState = (): GalynxAppState => ({
   users: [],
   channels: [],
   messagesByChannel: {},
+  messageNextCursorByChannel: {},
+  loadingMoreMessagesByChannel: {},
   threadReplies: [],
+  threadRepliesNextCursor: null,
+  loadingMoreThreadReplies: false,
   connectionStatus: 'offline'
 })
 
@@ -140,11 +148,25 @@ export const useGalynxApp = () => {
     }
   }
 
-  const loadMessages = async (channelId: string) => {
-    const list = await api.messagesList(channelId, 50)
+  const mergeByIdSorted = (items: Message[]): Message[] => {
+    const map = new Map<string, Message>()
+    for (const item of items) map.set(item.id, item)
+    return Array.from(map.values()).sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime())
+  }
+
+  const loadMessages = async (channelId: string, opts?: { append?: boolean; cursor?: string }) => {
+    const list = await api.messagesList(channelId, 50, opts?.cursor)
     const mapped = list.items.map(mapApiMessageToUi)
     for (const message of mapped) ensureUser(message.userId)
-    state.value.messagesByChannel[channelId] = mapped
+    if (opts?.append) {
+      state.value.messagesByChannel[channelId] = mergeByIdSorted([
+        ...(state.value.messagesByChannel[channelId] ?? []),
+        ...mapped
+      ])
+    } else {
+      state.value.messagesByChannel[channelId] = mapped
+    }
+    state.value.messageNextCursorByChannel[channelId] = list.next_cursor
   }
 
   const bootstrap = async () => {
@@ -274,16 +296,28 @@ export const useGalynxApp = () => {
     }
   }
 
+  const editMessage = async (messageId: string, nextBody: string) => {
+    const updated = await api.messagesEdit(messageId, nextBody)
+    upsertMessage(mapApiMessageToUi(updated))
+  }
+
+  const deleteMessage = async (messageId: string) => {
+    await api.messagesDelete(messageId)
+    removeMessage(messageId)
+  }
+
   const openThread = async (root: Message) => {
     state.value.threadRoot = root
     const replies = await api.threadRepliesList(root.id, 50)
     state.value.threadReplies = replies.items.map(mapApiMessageToUi)
+    state.value.threadRepliesNextCursor = replies.next_cursor
     for (const reply of state.value.threadReplies) ensureUser(reply.userId)
   }
 
   const closeThread = () => {
     state.value.threadRoot = undefined
     state.value.threadReplies = []
+    state.value.threadRepliesNextCursor = null
   }
 
   const sendThreadReply = async (text: string) => {
@@ -291,6 +325,38 @@ export const useGalynxApp = () => {
     const sent = await api.threadReplySend(state.value.threadRoot.id, text)
     const mapped = mapApiMessageToUi(sent)
     state.value.threadReplies.push(mapped)
+  }
+
+  const loadMoreMessages = async () => {
+    const channelId = state.value.activeChannelId
+    if (!channelId) return
+    const cursor = state.value.messageNextCursorByChannel[channelId]
+    if (!cursor) return
+    if (state.value.loadingMoreMessagesByChannel[channelId]) return
+
+    state.value.loadingMoreMessagesByChannel[channelId] = true
+    try {
+      await loadMessages(channelId, { append: true, cursor })
+    } finally {
+      state.value.loadingMoreMessagesByChannel[channelId] = false
+    }
+  }
+
+  const loadMoreThreadReplies = async () => {
+    const root = state.value.threadRoot
+    const cursor = state.value.threadRepliesNextCursor
+    if (!root || !cursor || state.value.loadingMoreThreadReplies) return
+
+    state.value.loadingMoreThreadReplies = true
+    try {
+      const list = await api.threadRepliesList(root.id, 50, cursor)
+      const mapped = list.items.map(mapApiMessageToUi)
+      for (const message of mapped) ensureUser(message.userId)
+      state.value.threadReplies = mergeByIdSorted([...state.value.threadReplies, ...mapped])
+      state.value.threadRepliesNextCursor = list.next_cursor
+    } finally {
+      state.value.loadingMoreThreadReplies = false
+    }
   }
 
   const applyRealtimeEvent = (event: RealtimeEnvelope) => {
@@ -338,18 +404,39 @@ export const useGalynxApp = () => {
     return state.value.messagesByChannel[channelId] ?? []
   })
 
+  const hasMoreMessages = computed<boolean>(() => {
+    const channelId = state.value.activeChannelId
+    if (!channelId) return false
+    return Boolean(state.value.messageNextCursorByChannel[channelId])
+  })
+
+  const isLoadingMoreMessages = computed<boolean>(() => {
+    const channelId = state.value.activeChannelId
+    if (!channelId) return false
+    return Boolean(state.value.loadingMoreMessagesByChannel[channelId])
+  })
+
+  const hasMoreThreadReplies = computed<boolean>(() => Boolean(state.value.threadRepliesNextCursor))
+
   return {
     state,
     activeMessages,
+    hasMoreMessages,
+    isLoadingMoreMessages,
+    hasMoreThreadReplies,
     bootstrap,
     login,
     logout,
     selectChannel,
     createChannel,
     sendMessage,
+    editMessage,
+    deleteMessage,
+    loadMoreMessages,
     openThread,
     closeThread,
     sendThreadReply,
+    loadMoreThreadReplies,
     applyRealtimeEvent,
     setConnectionStatus
   }

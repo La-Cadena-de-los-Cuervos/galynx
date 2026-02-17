@@ -12,6 +12,11 @@ const app = useGalynxApp()
 const router = useRouter()
 const state = app.state
 const activeMessages = app.activeMessages
+const hasMoreMessages = app.hasMoreMessages
+const isLoadingMoreMessages = app.isLoadingMoreMessages
+const hasMoreThreadReplies = app.hasMoreThreadReplies
+const messagesScroller = ref<HTMLElement | null>(null)
+const scrollDebounceTimer = ref<ReturnType<typeof setTimeout> | null>(null)
 
 const workspaces: Workspace[] = [{ id: 'ws-1', name: 'Galynx Engineering', shortLabel: 'GX' }]
 const showCreateChannelModal = ref(false)
@@ -97,6 +102,50 @@ const onSendThreadReply = async (message: string) => {
   await app.sendThreadReply(message)
 }
 
+const onEditMessage = async (payload: { messageId: string; body: string }) => {
+  await app.editMessage(payload.messageId, payload.body)
+}
+
+const onDeleteMessage = async (messageId: string) => {
+  await app.deleteMessage(messageId)
+}
+
+const onLoadMoreMessages = async () => {
+  const scroller = messagesScroller.value
+  const previousHeight = scroller?.scrollHeight ?? 0
+  const previousTop = scroller?.scrollTop ?? 0
+  await app.loadMoreMessages()
+  await nextTick()
+  if (!scroller) return
+  const delta = scroller.scrollHeight - previousHeight
+  scroller.scrollTop = previousTop + delta
+}
+
+const onLoadMoreThreadReplies = async () => {
+  await app.loadMoreThreadReplies()
+}
+
+const onMessagesScroll = async () => {
+  if (scrollDebounceTimer.value) {
+    clearTimeout(scrollDebounceTimer.value)
+  }
+
+  scrollDebounceTimer.value = setTimeout(async () => {
+    const scroller = messagesScroller.value
+    if (!scroller) return
+    if (!hasMoreMessages.value || isLoadingMoreMessages.value) return
+    if (scroller.scrollTop > 120) return
+    await onLoadMoreMessages()
+  }, 150)
+}
+
+onBeforeUnmount(() => {
+  if (scrollDebounceTimer.value) {
+    clearTimeout(scrollDebounceTimer.value)
+    scrollDebounceTimer.value = null
+  }
+})
+
 const onCreateChannel = async (payload: { name: string; isPrivate: boolean }) => {
   await app.createChannel(payload.name, payload.isPrivate)
   showCreateChannelModal.value = false
@@ -135,7 +184,7 @@ onMounted(async () => {
         @toggle-thread="app.closeThread"
       />
 
-      <section class="flex-1 min-h-0 overflow-y-auto px-6 py-6">
+      <section ref="messagesScroller" class="flex-1 min-h-0 overflow-y-auto px-6 py-6" @scroll.passive="onMessagesScroll">
         <div v-if="state.connectionStatus === 'reconnecting'" class="mb-4 text-xs px-3 py-2 rounded-lg border gx-border bg-amber-500/10 text-amber-100">
           Reconnecting to WebSocket... Your drafts are safe.
         </div>
@@ -161,6 +210,8 @@ onMounted(async () => {
               :users="state.users"
               :currentUser="fallbackUser"
               @reply="onReply"
+              @edit="onEditMessage"
+              @delete="onDeleteMessage"
             />
           </div>
         </div>
@@ -179,7 +230,12 @@ onMounted(async () => {
       :replies="state.threadReplies"
       :users="state.users"
       :currentUser="fallbackUser"
+      :canLoadMore="hasMoreThreadReplies"
+      :loadingMore="state.loadingMoreThreadReplies"
       @send-reply="onSendThreadReply"
+      @load-more="onLoadMoreThreadReplies"
+      @edit="onEditMessage"
+      @delete="onDeleteMessage"
       @close="app.closeThread"
     />
 

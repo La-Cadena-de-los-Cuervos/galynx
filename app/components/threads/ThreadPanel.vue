@@ -8,14 +8,68 @@ const props = defineProps<{
   replies: Message[]
   users: User[]
   currentUser: User
+  canLoadMore?: boolean
+  loadingMore?: boolean
 }>()
 
-defineEmits<{
+const emit = defineEmits<{
   (e: 'close'): void
   (e: 'send-reply', message: string): void
+  (e: 'load-more'): void
+  (e: 'edit', payload: { messageId: string; body: string }): void
+  (e: 'delete', messageId: string): void
+  (e: 'request-delete-denied'): void
 }>()
 
 const replyCountLabel = computed(() => `${props.replies.length} ${props.replies.length === 1 ? 'reply' : 'replies'}`)
+const repliesScroller = ref<HTMLElement | null>(null)
+const pendingScrollAnchor = ref<{ height: number; top: number } | null>(null)
+const scrollDebounceTimer = ref<ReturnType<typeof setTimeout> | null>(null)
+
+const requestLoadMore = () => {
+  if (!props.canLoadMore || props.loadingMore) return
+  const scroller = repliesScroller.value
+  if (!scroller) return
+  pendingScrollAnchor.value = {
+    height: scroller.scrollHeight,
+    top: scroller.scrollTop
+  }
+  emit('load-more')
+}
+
+const onRepliesScroll = () => {
+  if (scrollDebounceTimer.value) {
+    clearTimeout(scrollDebounceTimer.value)
+  }
+
+  scrollDebounceTimer.value = setTimeout(() => {
+    const scroller = repliesScroller.value
+    if (!scroller) return
+    if (scroller.scrollTop > 120) return
+    requestLoadMore()
+  }, 150)
+}
+
+watch(
+  () => props.replies.length,
+  async (nextLen, prevLen) => {
+    if (nextLen <= prevLen) return
+    if (!pendingScrollAnchor.value) return
+    await nextTick()
+    const scroller = repliesScroller.value
+    if (!scroller) return
+    const delta = scroller.scrollHeight - pendingScrollAnchor.value.height
+    scroller.scrollTop = pendingScrollAnchor.value.top + delta
+    pendingScrollAnchor.value = null
+  }
+)
+
+onBeforeUnmount(() => {
+  if (scrollDebounceTimer.value) {
+    clearTimeout(scrollDebounceTimer.value)
+    scrollDebounceTimer.value = null
+  }
+})
 </script>
 
 <template>
@@ -31,18 +85,23 @@ const replyCountLabel = computed(() => `${props.replies.length} ${props.replies.
       </button>
     </div>
 
-    <div class="flex-1 overflow-y-auto px-3 py-3 space-y-3">
+    <div ref="repliesScroller" class="flex-1 overflow-y-auto px-3 py-3 space-y-3" @scroll.passive="onRepliesScroll">
       <div class="rounded-lg border gx-border bg-slate-950/45">
         <MessageItem :message="rootMessage" :users="users" :currentUser="currentUser" />
       </div>
 
       <div class="space-y-2">
+        <div v-if="loadingMore" class="px-2 py-1 gx-text-caption gx-muted">Loading older replies...</div>
+
         <MessageItem
           v-for="r in replies"
           :key="r.id"
           :message="r"
           :users="users"
           :currentUser="currentUser"
+          @edit="$emit('edit', $event)"
+          @delete="$emit('delete', $event)"
+          @request-delete-denied="$emit('request-delete-denied')"
         />
       </div>
     </div>

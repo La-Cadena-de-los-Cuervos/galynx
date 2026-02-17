@@ -7,8 +7,10 @@ const props = defineProps<{
   currentUser: User
 }>()
 
-defineEmits<{
+const emit = defineEmits<{
   (e: 'reply', messageId: string): void
+  (e: 'edit', payload: { messageId: string; body: string }): void
+  (e: 'delete', messageId: string): void
   (e: 'request-delete-denied'): void
 }>()
 
@@ -29,6 +31,9 @@ const canDelete = computed(() => {
   const role: Role = props.currentUser.role
   return props.currentUser.id === props.message.userId || role === 'owner' || role === 'admin'
 })
+const canEdit = computed(() => props.currentUser.id === props.message.userId && !props.message.deleted)
+const isEditing = ref(false)
+const editDraft = ref('')
 
 const renderMarkdown = (value: string): string => {
   const escaped = value
@@ -70,6 +75,24 @@ const openAttachment = (attachment: Attachment) => {
   if (!import.meta.client) return
   window.open(attachment.downloadUrl, '_blank', 'noopener,noreferrer')
 }
+
+const startEdit = () => {
+  if (!canEdit.value) return
+  isEditing.value = true
+  editDraft.value = props.message.content
+}
+
+const cancelEdit = () => {
+  isEditing.value = false
+  editDraft.value = ''
+}
+
+const saveEdit = () => {
+  const next = editDraft.value.trim()
+  if (!next) return
+  isEditing.value = false
+  emit('edit', { messageId: props.message.id, body: next })
+}
 </script>
 
 <template>
@@ -92,6 +115,22 @@ const openAttachment = (attachment: Attachment) => {
         </div>
 
         <div v-if="message.deleted" class="mt-1 gx-text-body text-slate-500 italic">Message deleted</div>
+        <div v-else-if="isEditing" class="mt-2 space-y-2">
+          <textarea
+            v-model="editDraft"
+            class="w-full min-h-[80px] rounded-lg px-3 py-2 gx-text-body outline-none gx-input"
+            @keydown.enter.meta.prevent="saveEdit"
+            @keydown.enter.ctrl.prevent="saveEdit"
+          />
+          <div class="flex gap-2">
+            <button type="button" class="px-3 py-1.5 rounded text-xs gx-btn-primary gx-focus" @click="saveEdit">
+              Save
+            </button>
+            <button type="button" class="px-3 py-1.5 rounded text-xs gx-btn-ghost gx-focus" @click="cancelEdit">
+              Cancel
+            </button>
+          </div>
+        </div>
         <div v-else class="mt-1.5 gx-text-body text-slate-200 leading-6 break-words" v-html="renderedContent" />
 
         <div v-if="message.attachments?.length" class="mt-3 space-y-2">
@@ -134,10 +173,19 @@ const openAttachment = (attachment: Attachment) => {
           </button>
 
           <button
+            v-if="canEdit"
+            type="button"
+            class="gx-text-label text-slate-500 hover:text-cyan-200 opacity-0 group-hover:opacity-100 transition gx-focus rounded px-1"
+            @click="startEdit"
+          >
+            Edit
+          </button>
+
+          <button
             type="button"
             class="gx-text-label opacity-0 group-hover:opacity-100 transition gx-focus rounded px-1"
             :class="canDelete ? 'text-slate-500 hover:text-slate-300' : 'text-slate-500 hover:text-rose-300'"
-            @click="!canDelete && $emit('request-delete-denied')"
+            @click="canDelete ? $emit('delete', message.id) : $emit('request-delete-denied')"
           >
             Delete
           </button>
