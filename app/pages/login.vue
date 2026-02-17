@@ -1,14 +1,23 @@
 <script setup lang="ts">
 const router = useRouter()
+const app = useGalynxApp()
 
 const email = ref('')
 const password = ref('')
+const formError = ref<string>('')
+const authenticating = computed(() => app.state.value.authenticating)
 
 const canContinue = computed(() => email.value.trim().length > 3 && password.value.trim().length > 3)
 
 const go = async () => {
   if (!canContinue.value) return
-  await router.push('/')
+  formError.value = ''
+  try {
+    await app.login(email.value.trim(), password.value)
+    await router.push('/')
+  } catch {
+    formError.value = app.state.value.errorMessage ?? 'Could not sign in. Check your credentials.'
+  }
 }
 </script>
 
@@ -45,11 +54,15 @@ const go = async () => {
         <button
           type="button"
           class="w-full h-11 rounded-lg gx-text-body gx-btn-primary gx-focus"
-          :disabled="!canContinue"
+          :disabled="!canContinue || authenticating"
           @click="go"
         >
-          Continue
+          {{ authenticating ? 'Signing in...' : 'Continue' }}
         </button>
+
+        <p v-if="formError" class="gx-text-label text-rose-300">
+          {{ formError }}
+        </p>
       </div>
     </div>
   </div>

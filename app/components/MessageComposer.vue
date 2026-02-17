@@ -12,12 +12,23 @@ const props = withDefaults(defineProps<{
 
 const emit = defineEmits<{
   (e: 'send', payload: { message: string; files?: File[] }): void
-  (e: 'pick-files'): void
   (e: 'cancel-upload', attachmentId: string): void
 }>()
 
 const draft = ref<string>('')
+const localFiles = ref<Array<{ id: string; file: File }>>([])
+const fileInput = ref<HTMLInputElement | null>(null)
 const canSend = computed(() => draft.value.trim().length > 0)
+const visibleUploadQueue = computed<Attachment[]>(() => {
+  const localQueue = localFiles.value.map((entry) => ({
+    id: entry.id,
+    name: entry.file.name,
+    size: entry.file.size,
+    status: 'queued' as const,
+    contentType: entry.file.type
+  }))
+  return [...props.uploadQueue, ...localQueue]
+})
 
 const draftStatus = computed(() => {
   if (draft.value.trim().length > 0) return 'Draft saved'
@@ -35,8 +46,12 @@ const send = () => {
   const message = draft.value.trim()
   if (!message) return
 
-  emit('send', { message })
+  emit('send', { message, files: localFiles.value.map((entry) => entry.file) })
   draft.value = ''
+  localFiles.value = []
+  if (fileInput.value) {
+    fileInput.value.value = ''
+  }
 
   if (import.meta.client) {
     localStorage.removeItem(props.draftKey)
@@ -44,6 +59,32 @@ const send = () => {
 }
 
 const onEnter = () => send()
+
+const openFilePicker = () => {
+  fileInput.value?.click()
+}
+
+const onFileSelection = (event: Event) => {
+  const target = event.target as HTMLInputElement
+  const files = Array.from(target.files ?? [])
+  if (files.length === 0) return
+
+  for (const file of files) {
+    localFiles.value.push({
+      id: `queued-${crypto.randomUUID()}`,
+      file
+    })
+  }
+
+  target.value = ''
+}
+
+const cancelUpload = (attachmentId: string) => {
+  const before = localFiles.value.length
+  localFiles.value = localFiles.value.filter((entry) => entry.id !== attachmentId)
+  if (localFiles.value.length !== before) return
+  emit('cancel-upload', attachmentId)
+}
 
 onMounted(() => {
   if (!import.meta.client) return
@@ -68,9 +109,11 @@ watch(draft, (value) => {
 
 <template>
   <div>
-    <div v-if="uploadQueue.length > 0" class="mb-3 space-y-2">
+    <input ref="fileInput" type="file" multiple class="hidden" @change="onFileSelection" />
+
+    <div v-if="visibleUploadQueue.length > 0" class="mb-3 space-y-2">
       <div
-        v-for="item in uploadQueue"
+        v-for="item in visibleUploadQueue"
         :key="item.id"
         class="galynx-surface rounded-lg p-3"
       >
@@ -83,7 +126,7 @@ watch(draft, (value) => {
           <button
             type="button"
             class="text-xs px-2.5 py-1 rounded border gx-border text-slate-300 hover:bg-white/10 transition gx-focus"
-            @click="$emit('cancel-upload', item.id)"
+            @click="cancelUpload(item.id)"
           >
             Cancel
           </button>
@@ -104,7 +147,7 @@ watch(draft, (value) => {
         <button
           type="button"
           class="h-10 px-3 rounded-lg gx-btn-ghost gx-focus"
-          @click="$emit('pick-files')"
+          @click="openFilePicker"
         >
           📎
         </button>

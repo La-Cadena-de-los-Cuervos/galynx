@@ -1,3 +1,3 @@
 <template>
-  <GalynxDesktopMock scenario="main" />
+  <GalynxDesktopApp />
 </template>

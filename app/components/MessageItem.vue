@@ -64,6 +64,12 @@ const attachmentErrorLabel = (attachment: Attachment): string => {
   if (attachment.error === 'upload-failed') return 'Upload failed'
   return 'Attachment error'
 }
+
+const openAttachment = (attachment: Attachment) => {
+  if (!attachment.downloadUrl) return
+  if (!import.meta.client) return
+  window.open(attachment.downloadUrl, '_blank', 'noopener,noreferrer')
+}
 </script>
 
 <template>
@@ -110,6 +116,8 @@ const attachmentErrorLabel = (attachment: Attachment): string => {
             <button
               type="button"
               class="px-3 py-1.5 rounded text-xs gx-btn-ghost gx-focus"
+              :disabled="!a.downloadUrl"
+              @click="openAttachment(a)"
             >
               Download
             </button>
