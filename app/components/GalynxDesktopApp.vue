@@ -18,6 +18,8 @@ const activeMessages = app.activeMessages
 const hasMoreMessages = app.hasMoreMessages
 const isLoadingMoreMessages = app.isLoadingMoreMessages
 const hasMoreThreadReplies = app.hasMoreThreadReplies
+const activeWorkspaceMembers = app.activeWorkspaceMembers
+const activeChannelMembers = app.activeChannelMembers
 const messagesScroller = ref<HTMLElement | null>(null)
 const scrollDebounceTimer = ref<ReturnType<typeof setTimeout> | null>(null)
 
@@ -450,8 +452,8 @@ onMounted(async () => {
     <ChannelMembersModal
       v-if="showMembersModal"
       :activeChannel="activeChannel"
-      :workspaceMembers="app.activeWorkspaceMembers"
-      :channelMembers="app.activeChannelMembers"
+      :workspaceMembers="activeWorkspaceMembers"
+      :channelMembers="activeChannelMembers"
       :busy="membersBusy"
       @close="showMembersModal = false"
       @add-channel-member="onAddChannelMember"
