@@ -6,6 +6,7 @@ const props = defineProps<{
   users: User[]
   currentUser: User
 }>()
+const app = useGalynxApp()
 
 const emit = defineEmits<{
   (e: 'reply', messageId: string): void
@@ -34,6 +35,7 @@ const canDelete = computed(() => {
 const canEdit = computed(() => props.currentUser.id === props.message.userId && !props.message.deleted)
 const isEditing = ref(false)
 const editDraft = ref('')
+const downloadingAttachmentId = ref<string | null>(null)
 
 const renderMarkdown = (value: string): string => {
   const escaped = value
@@ -70,10 +72,16 @@ const attachmentErrorLabel = (attachment: Attachment): string => {
   return 'Attachment error'
 }
 
-const openAttachment = (attachment: Attachment) => {
-  if (!attachment.downloadUrl) return
+const openAttachment = async (attachment: Attachment) => {
   if (!import.meta.client) return
-  window.open(attachment.downloadUrl, '_blank', 'noopener,noreferrer')
+  downloadingAttachmentId.value = attachment.id
+  try {
+    const url = await app.ensureAttachmentDownloadUrl(attachment.id)
+    if (!url) return
+    window.open(url, '_blank', 'noopener,noreferrer')
+  } finally {
+    downloadingAttachmentId.value = null
+  }
 }
 
 const startEdit = () => {
@@ -155,10 +163,10 @@ const saveEdit = () => {
             <button
               type="button"
               class="px-3 py-1.5 rounded text-xs gx-btn-ghost gx-focus"
-              :disabled="!a.downloadUrl"
+              :disabled="downloadingAttachmentId === a.id"
               @click="openAttachment(a)"
             >
-              Download
+              {{ downloadingAttachmentId === a.id ? 'Opening...' : 'Download' }}
             </button>
           </div>
         </div>

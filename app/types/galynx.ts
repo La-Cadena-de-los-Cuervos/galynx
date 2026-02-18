@@ -8,6 +8,30 @@ export type Workspace = {
   shortLabel: string
 }
 
+export type WorkspaceMember = {
+  userId: string
+  workspaceId: string
+  role: Role
+  email?: string
+  name?: string
+}
+
+export type ChannelMember = {
+  channelId: string
+  userId: string
+}
+
+export type AuditEntry = {
+  id: string
+  workspaceId: string
+  actorId: string
+  action: string
+  targetType: string
+  targetId: string
+  metadata: Record<string, unknown>
+  createdAt: Date
+}
+
 export type ChannelPrivacy = 'public' | 'private'
 
 export type Channel = {
@@ -41,6 +65,7 @@ export type Attachment = {
   contentType?: string
   storageKey?: string
   downloadUrl?: string
+  downloadUrlFetchedAt?: number
 }
 
 export type Message = {
@@ -121,6 +146,29 @@ export type ApiAttachmentDto = {
   content_type: string | null
   storage_key: string | null
   download_url: string | null
+}
+
+export type ApiWorkspaceDto = Record<string, unknown>
+export type ApiWorkspaceMemberDto = {
+  user_id?: string
+  id?: string
+  workspace_id?: string
+  role?: Role
+  email?: string
+  name?: string
+}
+export type ApiChannelMemberDto = {
+  user_id?: string
+}
+export type ApiAuditDto = {
+  id?: string
+  workspace_id?: string
+  actor_id?: string
+  action?: string
+  target_type?: string
+  target_id?: string
+  metadata?: Record<string, unknown>
+  created_at?: number
 }
 
 export type RealtimeEnvelope = {

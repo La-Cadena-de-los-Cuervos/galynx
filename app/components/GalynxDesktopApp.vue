@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import ApiSettingsModal from '~/components/ApiSettingsModal.vue'
+import ChannelMembersModal from '~/components/ChannelMembersModal.vue'
 import ChannelHeader from '~/components/ChannelHeader.vue'
 import ConfirmActionModal from '~/components/ConfirmActionModal.vue'
 import CreateChannelModal from '~/components/CreateChannelModal.vue'
@@ -20,11 +21,13 @@ const hasMoreThreadReplies = app.hasMoreThreadReplies
 const messagesScroller = ref<HTMLElement | null>(null)
 const scrollDebounceTimer = ref<ReturnType<typeof setTimeout> | null>(null)
 
-const workspaces: Workspace[] = [{ id: 'ws-1', name: 'Galynx Engineering', shortLabel: 'GX' }]
+const fallbackWorkspaces: Workspace[] = [{ id: 'ws-fallback', name: 'Galynx', shortLabel: 'GX' }]
 const showCreateChannelModal = ref(false)
 const showApiSettingsModal = ref(false)
+const showMembersModal = ref(false)
 const confirmingAction = ref<null | { kind: 'message' | 'channel'; id: string }>(null)
 const confirmBusy = ref(false)
+const membersBusy = ref(false)
 const fallbackUser = computed<User>(() => {
   const current = state.value.currentUser
   if (current) return current
@@ -45,30 +48,52 @@ const activeChannel = computed<Channel | null>(() => {
     id: raw.id,
     name: raw.name,
     privacy: raw.is_private ? 'private' : 'public',
-    memberCount: 0
+    memberCount: state.value.channelMembersByChannel[raw.id]?.length ?? 0
   }
 })
 
 const publicChannels = computed<Channel[]>(() => {
+  const activeWorkspaceId = state.value.activeWorkspaceId
   return state.value.channels
+    .filter((item) => !activeWorkspaceId || item.workspace_id === activeWorkspaceId)
     .filter((item) => !item.is_private)
     .map((item) => ({
       id: item.id,
       name: item.name,
       privacy: 'public',
-      memberCount: 0
+      memberCount: state.value.channelMembersByChannel[item.id]?.length ?? 0
     }))
 })
 
 const privateChannels = computed<Channel[]>(() => {
+  const activeWorkspaceId = state.value.activeWorkspaceId
+  const currentUserId = state.value.currentUser?.id
+  const role = state.value.currentUser?.role ?? 'member'
   return state.value.channels
+    .filter((item) => !activeWorkspaceId || item.workspace_id === activeWorkspaceId)
     .filter((item) => item.is_private)
+    .filter((item) => {
+      if (role === 'owner' || role === 'admin') return true
+      if (!currentUserId) return false
+      const members = state.value.channelMembersByChannel[item.id]
+      if (!members) return true
+      return members.some((member) => member.userId === currentUserId)
+    })
     .map((item) => ({
       id: item.id,
       name: item.name,
       privacy: 'private',
-      memberCount: 0
+      memberCount: state.value.channelMembersByChannel[item.id]?.length ?? 0
     }))
+})
+
+const workspaces = computed<Workspace[]>(() => {
+  if (state.value.workspaces.length > 0) return state.value.workspaces
+  return fallbackWorkspaces
+})
+
+const activeWorkspaceId = computed<string>(() => {
+  return state.value.activeWorkspaceId ?? workspaces.value[0]?.id ?? 'ws-fallback'
 })
 
 type DayGroup = {
@@ -132,6 +157,67 @@ const onOpenSettings = async () => {
     // Error is already reported in global banner.
   }
   showApiSettingsModal.value = true
+}
+
+const onOpenMembers = async () => {
+  const workspaceId = state.value.activeWorkspaceId
+  const channelId = state.value.activeChannelId
+  if (!workspaceId || !channelId) {
+    app.notifyError('Select a channel first.')
+    return
+  }
+
+  membersBusy.value = true
+  try {
+    await Promise.all([
+      app.loadWorkspaceMembers(workspaceId),
+      app.loadChannelMembers(channelId)
+    ])
+    showMembersModal.value = true
+  } catch {
+    app.notifyError('Could not load members.')
+  } finally {
+    membersBusy.value = false
+  }
+}
+
+const onAddChannelMember = async (userId: string) => {
+  const channelId = state.value.activeChannelId
+  if (!channelId) return
+  membersBusy.value = true
+  try {
+    await app.addChannelMember(channelId, userId)
+  } catch {
+    app.notifyError('Could not add member to channel.')
+  } finally {
+    membersBusy.value = false
+  }
+}
+
+const onRemoveChannelMember = async (userId: string) => {
+  const channelId = state.value.activeChannelId
+  if (!channelId) return
+  membersBusy.value = true
+  try {
+    await app.removeChannelMember(channelId, userId)
+  } catch {
+    app.notifyError('Could not remove member from channel.')
+  } finally {
+    membersBusy.value = false
+  }
+}
+
+const onUpsertWorkspaceMember = async (payload: { email: string; role: 'admin' | 'member'; name?: string; password?: string }) => {
+  const workspaceId = state.value.activeWorkspaceId
+  if (!workspaceId) return
+  membersBusy.value = true
+  try {
+    await app.upsertWorkspaceMember(workspaceId, payload)
+  } catch {
+    app.notifyError('Could not update workspace member.')
+  } finally {
+    membersBusy.value = false
+  }
 }
 
 const onSaveApiBase = async (value: string) => {
@@ -225,6 +311,14 @@ const onCreateChannel = async (payload: { name: string; isPrivate: boolean }) =>
   showCreateChannelModal.value = false
 }
 
+const onSwitchWorkspace = async (workspaceId: string) => {
+  try {
+    await app.switchWorkspace(workspaceId)
+  } catch {
+    app.notifyError('Could not switch workspace.')
+  }
+}
+
 onMounted(async () => {
   if (state.value.initialized) return
   try {
@@ -239,7 +333,7 @@ onMounted(async () => {
   <div class="flex h-screen overflow-hidden text-slate-100">
     <LeftSidebar
       :workspaces="workspaces"
-      activeWorkspaceId="ws-1"
+      :activeWorkspaceId="activeWorkspaceId"
       :publicChannels="publicChannels"
       :privateChannels="privateChannels"
       :activeChannelId="activeChannel?.id"
@@ -249,6 +343,8 @@ onMounted(async () => {
       @create-channel="showCreateChannelModal = true"
       @delete-channel="onDeleteChannel"
       @open-settings="onOpenSettings"
+      @open-members="onOpenMembers"
+      @switch-workspace="onSwitchWorkspace"
     />
 
     <main class="flex-1 min-w-0 flex flex-col">
@@ -269,6 +365,10 @@ onMounted(async () => {
 
         <div v-if="state.connectionStatus === 'reconnecting'" class="mb-4 text-xs px-3 py-2 rounded-lg border gx-border bg-amber-500/10 text-amber-100">
           Reconnecting to WebSocket... Your drafts are safe.
+        </div>
+
+        <div v-if="state.reconcilingRealtime" class="mb-4 text-xs px-3 py-2 rounded-lg border gx-border bg-cyan-500/10 text-cyan-100">
+          Syncing latest updates after reconnect...
         </div>
 
         <EmptyState v-if="!activeChannel && !state.bootstrapping" variant="no-channels" />
@@ -345,6 +445,18 @@ onMounted(async () => {
       :busy="state.settingsSaving"
       @close="showApiSettingsModal = false"
       @save="onSaveApiBase"
+    />
+
+    <ChannelMembersModal
+      v-if="showMembersModal"
+      :activeChannel="activeChannel"
+      :workspaceMembers="app.activeWorkspaceMembers"
+      :channelMembers="app.activeChannelMembers"
+      :busy="membersBusy"
+      @close="showMembersModal = false"
+      @add-channel-member="onAddChannelMember"
+      @remove-channel-member="onRemoveChannelMember"
+      @upsert-workspace-member="onUpsertWorkspaceMember"
     />
   </div>
 </template>

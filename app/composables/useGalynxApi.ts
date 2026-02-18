@@ -1,11 +1,15 @@
 import { invoke } from '@tauri-apps/api/core'
 import type {
   ApiAttachmentDto,
+  ApiAuditDto,
   ApiChannelDto,
+  ApiChannelMemberDto,
   ApiMessageDto,
   ApiMessageListDto,
   ApiThreadSummaryDto,
   ApiUserDto,
+  ApiWorkspaceDto,
+  ApiWorkspaceMemberDto,
   AuthSessionDto
 } from '~/types/galynx'
 
@@ -16,9 +20,9 @@ const ensureTauri = () => {
 }
 
 export const useGalynxApi = () => {
-  const authLogin = (email: string, password: string) => {
+  const authLogin = (email: string, password: string, workspaceId?: string) => {
     ensureTauri()
-    return invoke<AuthSessionDto>('auth_login', { payload: { email, password } })
+    return invoke<AuthSessionDto>('auth_login', { payload: { email, password, workspace_id: workspaceId } })
   }
 
   const authMe = () => {
@@ -44,6 +48,21 @@ export const useGalynxApi = () => {
   const channelsDelete = (channelId: string) => {
     ensureTauri()
     return invoke<void>('channels_delete', { payload: { channel_id: channelId } })
+  }
+
+  const channelMembersList = (channelId: string) => {
+    ensureTauri()
+    return invoke<ApiChannelMemberDto[]>('channel_members_list', { payload: { channel_id: channelId } })
+  }
+
+  const channelMembersAdd = (channelId: string, userId: string) => {
+    ensureTauri()
+    return invoke<void>('channel_members_add', { payload: { channel_id: channelId, user_id: userId } })
+  }
+
+  const channelMembersRemove = (channelId: string, userId: string) => {
+    ensureTauri()
+    return invoke<void>('channel_members_remove', { payload: { channel_id: channelId, user_id: userId } })
   }
 
   const messagesList = (channelId: string, limit = 50, cursor?: string) => {
@@ -132,6 +151,63 @@ export const useGalynxApi = () => {
     })
   }
 
+  const workspacesList = () => {
+    ensureTauri()
+    return invoke<ApiWorkspaceDto[]>('workspaces_list')
+  }
+
+  const workspacesCreate = (name: string) => {
+    ensureTauri()
+    return invoke<ApiWorkspaceDto>('workspaces_create', { payload: { name } })
+  }
+
+  const workspaceMembersList = (workspaceId: string) => {
+    ensureTauri()
+    return invoke<ApiWorkspaceMemberDto[]>('workspace_members_list', { payload: { workspace_id: workspaceId } })
+  }
+
+  const workspaceMembersUpsert = (workspaceId: string, payload: {
+    email: string
+    name?: string
+    password?: string
+    role: 'admin' | 'member'
+  }) => {
+    ensureTauri()
+    return invoke<void>('workspace_members_upsert', {
+      payload: {
+        workspace_id: workspaceId,
+        ...payload
+      }
+    })
+  }
+
+  const usersList = () => {
+    ensureTauri()
+    return invoke<ApiUserDto[]>('users_list')
+  }
+
+  const usersCreate = (payload: {
+    email: string
+    name: string
+    password: string
+    role: 'admin' | 'member'
+  }) => {
+    ensureTauri()
+    return invoke<ApiUserDto>('users_create', { payload })
+  }
+
+  const auditList = (limit = 50, cursor?: string) => {
+    ensureTauri()
+    return invoke<{ items: ApiAuditDto[]; next_cursor: string | null }>('audit_list', {
+      payload: { limit, cursor }
+    })
+  }
+
+  const attachmentGet = (attachmentId: string) => {
+    ensureTauri()
+    return invoke<ApiAttachmentDto>('attachment_get', { payload: { attachment_id: attachmentId } })
+  }
+
   const realtimeConnect = () => {
     ensureTauri()
     return invoke<void>('realtime_connect')
@@ -159,6 +235,9 @@ export const useGalynxApi = () => {
     channelsList,
     channelsCreate,
     channelsDelete,
+    channelMembersList,
+    channelMembersAdd,
+    channelMembersRemove,
     messagesList,
     messagesSend,
     attachmentsUploadCommit,
@@ -167,6 +246,14 @@ export const useGalynxApi = () => {
     threadGet,
     threadRepliesList,
     threadReplySend,
+    workspacesList,
+    workspacesCreate,
+    workspaceMembersList,
+    workspaceMembersUpsert,
+    usersList,
+    usersCreate,
+    auditList,
+    attachmentGet,
     settingsGetApiBase,
     settingsSetApiBase,
     realtimeConnect,

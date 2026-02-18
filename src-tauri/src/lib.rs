@@ -87,6 +87,7 @@ struct ThreadSummaryDto {
 struct LoginPayload {
     email: String,
     password: String,
+    workspace_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -162,6 +163,55 @@ struct DeleteChannelPayload {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct DeleteMessagePayload {
     message_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct AttachmentGetPayload {
+    attachment_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct WorkspaceIdPayload {
+    workspace_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct WorkspacesCreatePayload {
+    name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct WorkspaceMembersUpsertPayload {
+    workspace_id: String,
+    email: String,
+    name: Option<String>,
+    password: Option<String>,
+    role: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct UsersCreatePayload {
+    email: String,
+    name: String,
+    password: String,
+    role: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ChannelMemberPayload {
+    channel_id: String,
+    user_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ChannelIdPayload {
+    channel_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct AuditListPayload {
+    limit: Option<u32>,
+    cursor: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -690,10 +740,13 @@ async fn auth_login(
     state: State<'_, AppState>,
     payload: LoginPayload,
 ) -> CmdResult<AuthSessionDto> {
-    let body = json!({
+    let mut body = json!({
       "email": payload.email,
       "password": payload.password
     });
+    if let Some(workspace_id) = payload.workspace_id {
+        body["workspace_id"] = JsonValue::String(workspace_id);
+    }
 
     let tokens_value = state
         .send_json(Method::POST, "/auth/login", Some(body), false)
@@ -798,6 +851,163 @@ async fn channels_delete(
 }
 
 #[tauri::command]
+async fn channel_members_list(
+    state: State<'_, AppState>,
+    payload: ChannelIdPayload,
+) -> CmdResult<Vec<JsonValue>> {
+    let value = state
+        .send_json(
+            Method::GET,
+            &format!("/channels/{}/members", payload.channel_id),
+            None,
+            true,
+        )
+        .await
+        .map_err(ApiErrorDto::from)?;
+    serde_json::from_value(value)
+        .map_err(|err| ApiErrorDto::from(ApiError::InvalidResponse(err.to_string())))
+}
+
+#[tauri::command]
+async fn channel_members_add(
+    state: State<'_, AppState>,
+    payload: ChannelMemberPayload,
+) -> CmdResult<()> {
+    state
+        .send_json(
+            Method::POST,
+            &format!("/channels/{}/members", payload.channel_id),
+            Some(json!({ "user_id": payload.user_id })),
+            true,
+        )
+        .await
+        .map_err(ApiErrorDto::from)?;
+    Ok(())
+}
+
+#[tauri::command]
+async fn channel_members_remove(
+    state: State<'_, AppState>,
+    payload: ChannelMemberPayload,
+) -> CmdResult<()> {
+    state
+        .send_json(
+            Method::DELETE,
+            &format!("/channels/{}/members/{}", payload.channel_id, payload.user_id),
+            None,
+            true,
+        )
+        .await
+        .map_err(ApiErrorDto::from)?;
+    Ok(())
+}
+
+#[tauri::command]
+async fn workspaces_list(state: State<'_, AppState>) -> CmdResult<Vec<JsonValue>> {
+    let value = state
+        .send_json(Method::GET, "/workspaces", None, true)
+        .await
+        .map_err(ApiErrorDto::from)?;
+    serde_json::from_value(value)
+        .map_err(|err| ApiErrorDto::from(ApiError::InvalidResponse(err.to_string())))
+}
+
+#[tauri::command]
+async fn workspaces_create(
+    state: State<'_, AppState>,
+    payload: WorkspacesCreatePayload,
+) -> CmdResult<JsonValue> {
+    state
+        .send_json(
+            Method::POST,
+            "/workspaces",
+            Some(json!({ "name": payload.name })),
+            true,
+        )
+        .await
+        .map_err(ApiErrorDto::from)
+}
+
+#[tauri::command]
+async fn workspace_members_list(
+    state: State<'_, AppState>,
+    payload: WorkspaceIdPayload,
+) -> CmdResult<Vec<JsonValue>> {
+    let value = state
+        .send_json(
+            Method::GET,
+            &format!("/workspaces/{}/members", payload.workspace_id),
+            None,
+            true,
+        )
+        .await
+        .map_err(ApiErrorDto::from)?;
+    serde_json::from_value(value)
+        .map_err(|err| ApiErrorDto::from(ApiError::InvalidResponse(err.to_string())))
+}
+
+#[tauri::command]
+async fn workspace_members_upsert(
+    state: State<'_, AppState>,
+    payload: WorkspaceMembersUpsertPayload,
+) -> CmdResult<()> {
+    let mut body = json!({
+        "email": payload.email,
+        "role": payload.role
+    });
+    if let Some(name) = payload.name {
+        body["name"] = JsonValue::String(name);
+    }
+    if let Some(password) = payload.password {
+        body["password"] = JsonValue::String(password);
+    }
+
+    state
+        .send_json(
+            Method::POST,
+            &format!("/workspaces/{}/members", payload.workspace_id),
+            Some(body),
+            true,
+        )
+        .await
+        .map_err(ApiErrorDto::from)?;
+    Ok(())
+}
+
+#[tauri::command]
+async fn users_list(state: State<'_, AppState>) -> CmdResult<Vec<UserDto>> {
+    let value = state
+        .send_json(Method::GET, "/users", None, true)
+        .await
+        .map_err(ApiErrorDto::from)?;
+    serde_json::from_value(value)
+        .map_err(|err| ApiErrorDto::from(ApiError::InvalidResponse(err.to_string())))
+}
+
+#[tauri::command]
+async fn users_create(
+    state: State<'_, AppState>,
+    payload: UsersCreatePayload,
+) -> CmdResult<UserDto> {
+    let value = state
+        .send_json(
+            Method::POST,
+            "/users",
+            Some(json!({
+                "email": payload.email,
+                "name": payload.name,
+                "password": payload.password,
+                "role": payload.role
+            })),
+            true,
+        )
+        .await
+        .map_err(ApiErrorDto::from)?;
+    serde_json::from_value(value)
+        .map_err(|err| ApiErrorDto::from(ApiError::InvalidResponse(err.to_string())))
+}
+
+#[tauri::command]
 async fn messages_list(
     state: State<'_, AppState>,
     payload: ListMessagesPayload,
@@ -848,6 +1058,56 @@ async fn attachments_upload_commit(
         .upload_attachment_for_message(payload)
         .await
         .map_err(ApiErrorDto::from)
+}
+
+#[tauri::command]
+async fn attachment_get(
+    state: State<'_, AppState>,
+    payload: AttachmentGetPayload,
+) -> CmdResult<AttachmentDto> {
+    let value = state
+        .send_json(
+            Method::GET,
+            &format!("/attachments/{}", payload.attachment_id),
+            None,
+            true,
+        )
+        .await
+        .map_err(ApiErrorDto::from)?;
+
+    let name = value
+        .get("filename")
+        .or_else(|| value.get("name"))
+        .and_then(JsonValue::as_str)
+        .unwrap_or("file")
+        .to_string();
+    let size_bytes = value
+        .get("size_bytes")
+        .or_else(|| value.get("size"))
+        .and_then(JsonValue::as_i64)
+        .unwrap_or(0);
+    let content_type = value
+        .get("content_type")
+        .and_then(JsonValue::as_str)
+        .map(ToString::to_string);
+    let storage_key = value
+        .get("storage_key")
+        .or_else(|| value.get("key"))
+        .and_then(JsonValue::as_str)
+        .map(ToString::to_string);
+    let download_url = value
+        .get("download_url")
+        .and_then(JsonValue::as_str)
+        .map(ToString::to_string);
+
+    Ok(AttachmentDto {
+        id: payload.attachment_id,
+        name,
+        size_bytes,
+        content_type,
+        storage_key,
+        download_url,
+    })
 }
 
 #[tauri::command]
@@ -944,6 +1204,23 @@ async fn thread_reply_send(
         .map_err(ApiErrorDto::from)?;
     serde_json::from_value(value)
         .map_err(|err| ApiErrorDto::from(ApiError::InvalidResponse(err.to_string())))
+}
+
+#[tauri::command]
+async fn audit_list(
+    state: State<'_, AppState>,
+    payload: AuditListPayload,
+) -> CmdResult<JsonValue> {
+    let mut path = format!("/audit?limit={}", payload.limit.unwrap_or(50).clamp(1, 100));
+    if let Some(cursor) = payload.cursor {
+        path.push_str("&cursor=");
+        path.push_str(&cursor);
+    }
+
+    state
+        .send_json(Method::GET, &path, None, true)
+        .await
+        .map_err(ApiErrorDto::from)
 }
 
 #[tauri::command]
@@ -1131,17 +1408,28 @@ pub fn run() {
             auth_login,
             auth_me,
             auth_logout,
+            workspaces_list,
+            workspaces_create,
+            workspace_members_list,
+            workspace_members_upsert,
+            users_list,
+            users_create,
             channels_list,
             channels_create,
             channels_delete,
+            channel_members_list,
+            channel_members_add,
+            channel_members_remove,
             messages_list,
             messages_send,
             attachments_upload_commit,
+            attachment_get,
             messages_edit,
             messages_delete,
             thread_get,
             thread_replies_list,
             thread_reply_send,
+            audit_list,
             settings_get_api_base,
             settings_set_api_base,
             realtime_connect,
@@ -1216,5 +1504,48 @@ mod tests {
             Some("https://galynx.local/api/v1")
         );
         assert!(normalize_api_base("localhost:3000").is_none());
+    }
+
+    #[test]
+    fn attachment_commit_mapper_keeps_download_url_when_present() {
+        let mapped = map_attachment_commit_response(
+            json!({
+                "id": "att-2",
+                "filename": "log.txt",
+                "size": 512,
+                "content_type": "text/plain",
+                "key": "workspace/a/log.txt",
+                "download_url": "https://files.local/att-2?sig=abc"
+            }),
+            "fallback.bin".to_string(),
+            10,
+            "application/octet-stream".to_string(),
+            None,
+        );
+        assert_eq!(mapped.id, "att-2");
+        assert_eq!(mapped.name, "log.txt");
+        assert_eq!(mapped.size_bytes, 512);
+        assert_eq!(mapped.content_type.as_deref(), Some("text/plain"));
+        assert_eq!(mapped.storage_key.as_deref(), Some("workspace/a/log.txt"));
+        assert_eq!(
+            mapped.download_url.as_deref(),
+            Some("https://files.local/att-2?sig=abc")
+        );
+    }
+
+    #[test]
+    fn api_error_dto_maps_unauthenticated_and_http() {
+        let unauth = ApiErrorDto::from(ApiError::Unauthenticated);
+        assert_eq!(unauth.status, 401);
+        assert_eq!(unauth.error, "unauthorized");
+
+        let http = ApiErrorDto::from(ApiError::Http {
+            status: 429,
+            error: "too_many_requests".to_string(),
+            message: "slow down".to_string(),
+        });
+        assert_eq!(http.status, 429);
+        assert_eq!(http.error, "too_many_requests");
+        assert_eq!(http.message, "slow down");
     }
 }
