@@ -21,11 +21,12 @@ defineEmits<{
 
     <div class="flex items-center gap-2">
       <button
+        v-if="threadOpen"
         type="button"
         class="text-xs px-3 py-1.5 rounded-lg gx-btn-ghost transition gx-focus"
         @click="$emit('toggle-thread')"
       >
-        {{ threadOpen ? 'Hide thread' : 'Open thread' }}
+        Close thread
       </button>
     </div>
   </header>

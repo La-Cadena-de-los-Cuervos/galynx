@@ -73,6 +73,7 @@ export type Message = {
   channelId: string
   userId: string
   content: string
+  threadRootId?: string | null
   timestamp: Date
   status: MessageStatus
   edited?: boolean

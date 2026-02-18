@@ -1,11 +1,14 @@
 <script setup lang="ts">
 import type { Attachment, Message, Role, User } from '~/types/galynx'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   message: Message
   users: User[]
   currentUser: User
-}>()
+  showReplyAction?: boolean
+}>(), {
+  showReplyAction: true
+})
 const app = useGalynxApp()
 
 const emit = defineEmits<{
@@ -173,6 +176,7 @@ const saveEdit = () => {
 
         <div class="mt-2 flex items-center gap-3">
           <button
+            v-if="showReplyAction !== false"
             type="button"
             class="gx-text-label text-slate-400 hover:text-cyan-200 opacity-0 group-hover:opacity-100 transition gx-focus rounded px-1"
             @click="$emit('reply', message.id)"

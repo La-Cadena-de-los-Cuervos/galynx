@@ -14,7 +14,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (e: 'close'): void
-  (e: 'send-reply', message: string): void
+  (e: 'send-reply', payload: { message: string; files?: File[] }): void
   (e: 'load-more'): void
   (e: 'edit', payload: { messageId: string; body: string }): void
   (e: 'delete', messageId: string): void
@@ -91,6 +91,7 @@ onBeforeUnmount(() => {
           :message="rootMessage"
           :users="users"
           :currentUser="currentUser"
+          :showReplyAction="false"
           @edit="$emit('edit', $event)"
           @delete="$emit('delete', $event)"
           @request-delete-denied="$emit('request-delete-denied')"
@@ -106,6 +107,7 @@ onBeforeUnmount(() => {
           :message="r"
           :users="users"
           :currentUser="currentUser"
+          :showReplyAction="false"
           @edit="$emit('edit', $event)"
           @delete="$emit('delete', $event)"
           @request-delete-denied="$emit('request-delete-denied')"
@@ -114,7 +116,7 @@ onBeforeUnmount(() => {
     </div>
 
     <div class="p-3 border-t gx-border">
-      <MessageComposer draftKey="galynx-thread-draft" @send="$emit('send-reply', $event.message)" />
+      <MessageComposer draftKey="galynx-thread-draft" @send="$emit('send-reply', $event)" />
     </div>
   </aside>
 </template>

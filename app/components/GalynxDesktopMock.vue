@@ -275,10 +275,10 @@ const sendMessage = (payload: { message: string; files?: File[] }) => {
   })
 }
 
-const sendReply = (text: string) => {
+const sendReply = (payload: { message: string; files?: File[] }) => {
   if (!activeChannel.value) return
 
-  const next = text.trim()
+  const next = payload.message.trim()
   if (!next) return
 
   threadReplies.value.push({

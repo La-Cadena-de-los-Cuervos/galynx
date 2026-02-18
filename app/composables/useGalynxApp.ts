@@ -91,6 +91,7 @@ const mapApiMessageToUi = (message: ApiMessageDto): Message => ({
   channelId: message.channel_id,
   userId: message.sender_id,
   content: message.body_md,
+  threadRootId: message.thread_root_id,
   timestamp: toDate(message.created_at),
   status: 'sent',
   edited: typeof message.edited_at === 'number',
@@ -344,6 +345,10 @@ export const useGalynxApp = () => {
     return Array.from(map.values()).sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime())
   }
 
+  const sortByTimestampAsc = (items: Message[]): Message[] => {
+    return [...items].sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime())
+  }
+
   const loadMessages = async (channelId: string, opts?: { append?: boolean; cursor?: string }) => {
     const list = await api.messagesList(channelId, 50, opts?.cursor)
     const mapped = list.items.map(mapApiMessageToUi)
@@ -354,7 +359,7 @@ export const useGalynxApp = () => {
         ...mapped
       ])
     } else {
-      state.value.messagesByChannel[channelId] = mapped
+      state.value.messagesByChannel[channelId] = sortByTimestampAsc(mapped)
     }
     state.value.messageNextCursorByChannel[channelId] = list.next_cursor
   }
@@ -795,7 +800,7 @@ export const useGalynxApp = () => {
   const openThread = async (root: Message) => {
     state.value.threadRoot = root
     const replies = await api.threadRepliesList(root.id, 50)
-    state.value.threadReplies = replies.items.map(mapApiMessageToUi)
+    state.value.threadReplies = sortByTimestampAsc(replies.items.map(mapApiMessageToUi))
     state.value.threadRepliesNextCursor = replies.next_cursor
     for (const reply of state.value.threadReplies) ensureUser(reply.userId)
   }
@@ -806,12 +811,44 @@ export const useGalynxApp = () => {
     state.value.threadRepliesNextCursor = null
   }
 
-  const sendThreadReply = async (text: string) => {
+  const sendThreadReply = async (text: string, files: File[] = []) => {
     if (!state.value.threadRoot) return
     try {
       const sent = await api.threadReplySend(state.value.threadRoot.id, text)
       const mapped = mapApiMessageToUi(sent)
-      state.value.threadReplies.push(mapped)
+      state.value.threadReplies = sortByTimestampAsc([...state.value.threadReplies, mapped])
+
+      if (files.length > 0) {
+        const committedAttachments: Attachment[] = []
+        for (const file of files) {
+          try {
+            const bytes = new Uint8Array(await file.arrayBuffer())
+            const committed = await api.attachmentsUploadCommit(
+              mapped.channelId,
+              mapped.id,
+              file.name,
+              file.type || 'application/octet-stream',
+              bytes
+            )
+            committedAttachments.push(mapApiAttachmentToUi(committed))
+          } catch {
+            committedAttachments.push({
+              id: `failed-att-${crypto.randomUUID()}`,
+              name: file.name,
+              size: file.size,
+              status: 'failed',
+              error: 'upload-failed',
+              contentType: file.type
+            })
+          }
+        }
+
+        state.value.threadReplies = state.value.threadReplies.map((reply) =>
+          reply.id === mapped.id
+            ? { ...reply, attachments: committedAttachments }
+            : reply
+        )
+      }
     } catch (error) {
       setError(mapApiError(error))
       throw error
@@ -902,7 +939,7 @@ export const useGalynxApp = () => {
 
       if (state.value.threadRoot) {
         const replies = await api.threadRepliesList(state.value.threadRoot.id, 50)
-        state.value.threadReplies = replies.items.map(mapApiMessageToUi)
+        state.value.threadReplies = sortByTimestampAsc(replies.items.map(mapApiMessageToUi))
         state.value.threadRepliesNextCursor = replies.next_cursor
       }
     } catch {
@@ -958,7 +995,7 @@ export const useGalynxApp = () => {
       void (async () => {
         try {
           const replies = await api.threadRepliesList(rootId, 50)
-          state.value.threadReplies = replies.items.map(mapApiMessageToUi)
+          state.value.threadReplies = sortByTimestampAsc(replies.items.map(mapApiMessageToUi))
           state.value.threadRepliesNextCursor = replies.next_cursor
         } catch {
           // non-blocking update
@@ -998,7 +1035,7 @@ export const useGalynxApp = () => {
   const activeMessages = computed<Message[]>(() => {
     const channelId = state.value.activeChannelId
     if (!channelId) return []
-    return state.value.messagesByChannel[channelId] ?? []
+    return (state.value.messagesByChannel[channelId] ?? []).filter((message) => !message.threadRootId)
   })
 
   const hasMoreMessages = computed<boolean>(() => {

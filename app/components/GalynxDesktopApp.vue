@@ -130,8 +130,8 @@ const onReply = async (messageId: string) => {
   await app.openThread(root)
 }
 
-const onSendThreadReply = async (message: string) => {
-  await app.sendThreadReply(message)
+const onSendThreadReply = async (payload: { message: string; files?: File[] }) => {
+  await app.sendThreadReply(payload.message, payload.files ?? [])
 }
 
 const onEditMessage = async (payload: { messageId: string; body: string }) => {
