@@ -8,6 +8,49 @@ Este documento esta enfocado en integracion frontend (web/mobile) con `galynx-ap
 - Prefijo: `/api/v1`
 - OpenAPI: `GET /api/v1/openapi.json`
 
+## Variables de entorno del API
+
+- `PORT` (default: `3000`)
+- `JWT_SECRET` (default: `dev-only-change-me-in-prod`)
+- `ACCESS_TTL_MINUTES` (default: `15`)
+- `REFRESH_TTL_DAYS` (default: `30`)
+- `BOOTSTRAP_WORKSPACE_NAME` (default: `Galynx`)
+- `BOOTSTRAP_EMAIL` (default: `owner@galynx.local`)
+- `BOOTSTRAP_PASSWORD` (default: `ChangeMe123!`)
+- `PERSISTENCE_BACKEND` (`memory` o `mongo`, default: `memory`)
+- `MONGO_URI` (requerido cuando `PERSISTENCE_BACKEND=mongo`)
+- `REDIS_URL` (opcional, habilita pub/sub realtime entre réplicas)
+- `METRICS_ENABLED` (default: `true`, expone `/api/v1/metrics`)
+- `OTEL_EXPORTER_OTLP_ENDPOINT` (opcional, habilita trazas OTLP gRPC)
+- `OTEL_SERVICE_NAME` (default: `galynx-api`)
+- `OTEL_SAMPLE_RATIO` (default: `1.0`)
+- `S3_BUCKET` (opcional, habilita presign real de adjuntos)
+- `S3_REGION` (default: `us-east-1`)
+- `S3_ENDPOINT` (opcional, endpoint interno S3/RustFS para el API)
+- `S3_PUBLIC_ENDPOINT` (opcional, endpoint publico para URLs prefirmadas)
+- `S3_ACCESS_KEY_ID` / `S3_SECRET_ACCESS_KEY` (opcionales)
+- `S3_FORCE_PATH_STYLE` (default: `true`, recomendado con RustFS)
+
+Ejemplo para Mongo local:
+
+```bash
+export PERSISTENCE_BACKEND=mongo
+export MONGO_URI='mongodb://root:password@localhost:27017/?authSource=admin'
+export REDIS_URL='redis://localhost:6379'
+export METRICS_ENABLED='true'
+export OTEL_EXPORTER_OTLP_ENDPOINT='http://localhost:4317'
+export OTEL_SERVICE_NAME='galynx-api'
+export OTEL_SAMPLE_RATIO='1.0'
+export S3_BUCKET='galynx-attachments'
+export S3_REGION='us-east-1'
+export S3_ENDPOINT='http://rustfs:9000'
+export S3_PUBLIC_ENDPOINT='http://localhost:9000'
+export S3_ACCESS_KEY_ID='rustfsadmin'
+export S3_SECRET_ACCESS_KEY='rustfsadmin'
+export S3_FORCE_PATH_STYLE='true'
+cargo run
+```
+
 ## Autenticacion
 
 ### Header
@@ -62,6 +105,10 @@ Valores actuales de `error`:
 { "status": "ready" }
 ```
 
+### `GET /api/v1/metrics`
+
+Formato Prometheus text/plain para scraping de métricas HTTP del API.
+
 ## Auth
 
 ### `POST /api/v1/auth/login`
@@ -71,7 +118,8 @@ Request:
 ```json
 {
   "email": "owner@galynx.local",
-  "password": "ChangeMe123!"
+  "password": "ChangeMe123!",
+  "workspace_id": "uuid-opcional"
 }
 ```
 
@@ -120,6 +168,92 @@ Response `200`:
 }
 ```
 
+## Workspaces
+
+### `GET /api/v1/workspaces`
+
+Lista los workspaces del usuario autenticado.
+
+### `POST /api/v1/workspaces`
+
+Crea un workspace y agrega al usuario actual como `owner`.
+
+Request:
+
+```json
+{
+  "name": "Mi Workspace"
+}
+```
+
+### `GET /api/v1/workspaces/:id/members`
+
+Requiere rol `owner` o `admin` del workspace del token.
+
+### `POST /api/v1/workspaces/:id/members`
+
+Onboarding de usuarios al workspace (nuevo o existente).
+Requiere rol `owner` o `admin`.
+
+Request:
+
+```json
+{
+  "email": "nuevo@galynx.local",
+  "name": "Nuevo Usuario",
+  "password": "ChangeMe123!",
+  "role": "member"
+}
+```
+
+Notas:
+
+- Si el email ya existe, `name/password` son opcionales y se agrega/actualiza membresía.
+- `role` soporta `admin|member`.
+- `owner` no se permite por API.
+
+## Users
+
+### `GET /api/v1/users`
+
+Requiere rol `owner` o `admin`.
+
+Response `200`:
+
+```json
+[
+  {
+    "id": "uuid",
+    "email": "member@galynx.local",
+    "name": "Member User",
+    "workspace_id": "uuid",
+    "role": "member"
+  }
+]
+```
+
+### `POST /api/v1/users`
+
+Requiere rol `owner` o `admin`.
+
+Request:
+
+```json
+{
+  "email": "member@galynx.local",
+  "name": "Member User",
+  "password": "ChangeMe123!",
+  "role": "member"
+}
+```
+
+Response: `201`.
+
+Notas:
+
+- `role` soporta `admin` y `member`.
+- Alta de `owner` por API no está permitida.
+
 ## Channels
 
 ### `GET /api/v1/channels`
@@ -154,7 +288,42 @@ Request:
 
 Response: `201`.
 
+Nota de acceso:
+
+- Si `is_private=true`, solo miembros explícitos del canal pueden leer/publicar.
+- `owner` y `admin` pueden acceder aunque no estén en `channel_members`.
+
 ### `DELETE /api/v1/channels/:id`
+
+Requiere rol `owner` o `admin`.
+
+Response: `204`.
+
+### `GET /api/v1/channels/:id/members`
+
+Requiere rol `owner` o `admin`.
+
+Response `200`:
+
+```json
+[
+  { "user_id": "uuid" }
+]
+```
+
+### `POST /api/v1/channels/:id/members`
+
+Requiere rol `owner` o `admin`.
+
+Request:
+
+```json
+{ "user_id": "uuid" }
+```
+
+Response: `204`.
+
+### `DELETE /api/v1/channels/:id/members/:user_id`
 
 Requiere rol `owner` o `admin`.
 
@@ -414,6 +583,12 @@ Respuesta ACK:
   }
 }
 ```
+
+Nota de idempotencia:
+
+- En `SEND_MESSAGE`, si reutilizas el mismo `client_msg_id` para el mismo `channel_id` y usuario, la API responde el mismo `message_id` (sin crear duplicado).
+- En ese caso el ACK puede incluir `"deduped": true` en `payload.result`.
+- La misma estrategia de deduplicación por `client_msg_id` aplica también a `EDIT_MESSAGE`, `DELETE_MESSAGE`, `ADD_REACTION` y `REMOVE_REACTION`.
 
 Error WS:
 
