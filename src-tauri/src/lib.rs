@@ -67,6 +67,8 @@ struct MessageDto {
     created_at: i64,
     edited_at: Option<i64>,
     deleted_at: Option<i64>,
+    #[serde(default)]
+    attachments: Vec<AttachmentDto>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -80,8 +80,30 @@ const openAttachment = async (attachment: Attachment) => {
   downloadingAttachmentId.value = attachment.id
   try {
     const url = await app.ensureAttachmentDownloadUrl(attachment.id)
-    if (!url) return
-    window.open(url, '_blank', 'noopener,noreferrer')
+    if (!url) {
+      app.notifyError('Could not resolve attachment download URL.')
+      return
+    }
+
+    // Force file download instead of in-webview rendering.
+    const response = await fetch(url)
+    if (!response.ok) {
+      app.notifyError('Could not download attachment.')
+      return
+    }
+    const blob = await response.blob()
+    const objectUrl = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = objectUrl
+    link.download = attachment.name || 'attachment'
+    link.rel = 'noreferrer'
+    link.style.display = 'none'
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    URL.revokeObjectURL(objectUrl)
+  } catch {
+    app.notifyError('Could not download attachment.')
   } finally {
     downloadingAttachmentId.value = null
   }

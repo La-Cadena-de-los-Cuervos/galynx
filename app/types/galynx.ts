@@ -126,6 +126,7 @@ export type ApiMessageDto = {
   created_at: number
   edited_at: number | null
   deleted_at: number | null
+  attachments?: ApiAttachmentDto[]
 }
 
 export type ApiMessageListDto = {

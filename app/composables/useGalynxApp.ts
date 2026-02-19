@@ -95,7 +95,8 @@ const mapApiMessageToUi = (message: ApiMessageDto): Message => ({
   timestamp: toDate(message.created_at),
   status: 'sent',
   edited: typeof message.edited_at === 'number',
-  deleted: typeof message.deleted_at === 'number'
+  deleted: typeof message.deleted_at === 'number',
+  attachments: (message.attachments ?? []).map(mapApiAttachmentToUi)
 })
 
 const mapApiAttachmentToUi = (attachment: ApiAttachmentDto): Attachment => ({

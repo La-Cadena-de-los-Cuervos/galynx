@@ -73,7 +73,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <aside class="w-[396px] shrink-0 border-l gx-border gx-panel flex flex-col">
+  <aside class="w-[396px] min-w-[396px] shrink-0 border-l gx-border gx-panel flex flex-col">
     <div class="h-14 px-4 border-b gx-border flex items-center justify-between">
       <div>
         <div class="gx-text-section-title text-slate-100">Thread</div>

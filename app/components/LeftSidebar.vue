@@ -49,7 +49,7 @@ const selectWorkspace = (workspaceId: string) => {
 </script>
 
 <template>
-  <aside class="w-[312px] shrink-0 border-r gx-border gx-panel">
+  <aside class="w-[312px] min-w-[312px] shrink-0 border-r gx-border gx-panel">
     <div class="relative h-14 px-4 border-b gx-border flex items-center justify-between gap-3">
       <button type="button" class="flex items-center gap-3 min-w-0 px-2 py-1.5 rounded-lg hover:bg-white/5 transition gx-focus" @click="toggleWorkspaceMenu">
         <div class="size-8 rounded-lg bg-cyan-500/20 text-cyan-200 font-semibold text-xs flex items-center justify-center">

@@ -349,7 +349,7 @@ onMounted(async () => {
       @switch-workspace="onSwitchWorkspace"
     />
 
-    <main class="flex-1 min-w-0 flex flex-col">
+    <main class="flex-1 min-w-[520px] flex flex-col">
       <ChannelHeader
         v-if="activeChannel"
         :channelName="activeChannel.name"
